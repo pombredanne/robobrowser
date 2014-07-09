@@ -6,8 +6,40 @@ import tempfile
 from bs4 import BeautifulSoup
 
 from robobrowser.compat import builtin_name
-from robobrowser.forms import Form, fields
-from robobrowser.forms.form import _parse_fields
+from robobrowser.forms.form import Form, FormData, fields, _parse_fields
+
+
+class TestFormData(unittest.TestCase):
+
+    def setUp(self):
+        self.form_data = FormData()
+        self.form_data.add({'red': 'special'})
+
+    def test_add_payload(self):
+        self.form_data.add({'lazing': 'sunday'})
+        assert_true('lazing' in self.form_data.payload)
+        assert_equal(self.form_data.payload['lazing'], 'sunday')
+
+    def test_add_by_key(self):
+        self.form_data.add({'lazing': 'sunday'}, 'afternoon')
+        assert_false('lazing' in self.form_data.payload)
+        assert_true('afternoon' in self.form_data.options)
+        assert_true('lazing' in self.form_data.options['afternoon'])
+        assert_equal(
+            self.form_data.options['afternoon']['lazing'],
+            'sunday'
+        )
+
+    def test_requests_get(self):
+        out = self.form_data.to_requests('get')
+        assert_true('params' in out)
+        assert_equal(out['params'], {'red': 'special'})
+
+    def test_requests_post(self):
+        out = self.form_data.to_requests('post')
+        assert_true('data' in out)
+        assert_equal(out['data'], {'red': 'special'})
+
 
 class TestForm(unittest.TestCase):
 
@@ -30,6 +62,19 @@ class TestForm(unittest.TestCase):
         keys = set(('vocals', 'guitar', 'drums', 'bass'))
         assert_equal(set(self.form.fields.keys()), keys)
         assert_equal(set(self.form.keys()), keys)
+
+    def test_repr(self):
+        assert_equal(
+            repr(self.form),
+            '<RoboForm vocals=, guitar=, drums=roger, bass=>'
+        )
+
+    def test_repr_empty(self):
+        assert_equal(
+            repr(Form('<form></form>')),
+            '<RoboForm>'
+        )
+
 
 class TestParser(unittest.TestCase):
 
@@ -131,6 +176,7 @@ class TestParser(unittest.TestCase):
         assert_equal(len(_fields), 1)
         assert_true(isinstance(_fields['instrument'], fields.MultiSelect))
 
+
 class TestInput(unittest.TestCase):
 
     def setUp(self):
@@ -155,6 +201,7 @@ class TestInput(unittest.TestCase):
             {'brian': 'may'}
         )
 
+
 class TestInputBlank(unittest.TestCase):
 
     def setUp(self):
@@ -170,6 +217,7 @@ class TestInputBlank(unittest.TestCase):
             self.input.serialize(),
             {'blank': ''}
         )
+
 
 class TestTextarea(unittest.TestCase):
 
@@ -195,6 +243,7 @@ class TestTextarea(unittest.TestCase):
             {'roger': 'taylor'}
         )
 
+
 class TestTextareaBlank(unittest.TestCase):
 
     def setUp(self):
@@ -210,6 +259,7 @@ class TestTextareaBlank(unittest.TestCase):
             self.input.serialize(),
             {'blank': ''}
         )
+
 
 class TestSelect(unittest.TestCase):
 
@@ -252,6 +302,7 @@ class TestSelect(unittest.TestCase):
             {'john': "you're"}
         )
 
+
 class TestSelectBlank(unittest.TestCase):
 
     def setUp(self):
@@ -277,6 +328,7 @@ class TestSelectBlank(unittest.TestCase):
             {'john': 'tie'}
         )
 
+
 class TestMultiSelect(unittest.TestCase):
 
     def setUp(self):
@@ -288,6 +340,7 @@ class TestMultiSelect(unittest.TestCase):
             </select>
         '''
         self.input = fields.MultiSelect(BeautifulSoup(self.html).find('select'))
+
 
 class TestMixedCase(unittest.TestCase):
 
@@ -316,6 +369,7 @@ class TestMixedCase(unittest.TestCase):
             input.options,
             ['mercury', 'may']
         )
+
 
 class TestRadio(unittest.TestCase):
 
@@ -356,6 +410,7 @@ class TestRadio(unittest.TestCase):
             {'members': 'mercury'}
         )
 
+
 class TestRadioBlank(unittest.TestCase):
 
     def setUp(self):
@@ -375,6 +430,7 @@ class TestRadioBlank(unittest.TestCase):
             self.input.serialize(),
             {'member': ''}
         )
+
 
 class TestCheckbox(unittest.TestCase):
 
@@ -423,6 +479,7 @@ class TestCheckbox(unittest.TestCase):
             {'member': ['mercury', 'deacon']}
         )
 
+
 class TestCheckboxBlank(unittest.TestCase):
 
     def setUp(self):
@@ -444,6 +501,7 @@ class TestCheckboxBlank(unittest.TestCase):
             self.input.serialize(),
             {'member': []}
         )
+
 
 class TestFileInput(unittest.TestCase):
 

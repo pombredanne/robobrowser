@@ -1,3 +1,4 @@
+import mock
 import unittest
 from nose.tools import *
 
@@ -8,6 +9,7 @@ import functools
 from robobrowser import responses
 from robobrowser.browser import RoboBrowser
 from robobrowser.browser import RoboError
+from tests.utils import ArgCatcher
 
 
 def mock_responses(resps):
@@ -27,15 +29,6 @@ def mock_responses(resps):
         return wrapped
     return wrapper
 
-class ArgCatcher(object):
-    """Simple class for memorizing positional and keyword arguments. Used to
-    capture responses for mock_responses.
-
-    """
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-
 mock_links = mock_responses(
     [
         ArgCatcher(
@@ -53,18 +46,41 @@ mock_links = mock_responses(
 mock_forms = mock_responses(
     [
         ArgCatcher(
-            responses.GET, 'http://robobrowser.com/get/',
+            responses.GET, 'http://robobrowser.com/get_form/',
             body=b'''
-                <form id="bass" method="post" action="/post/">'
+                <form id="bass" method="get" action="/get_form/">'
                     <input name="deacon" value="john" />
                 </form>
-                <form id="drums" method="post" action="/post/">'
+                <form id="drums" method="post" action="/get_form/">'
                     <input name="deacon" value="john" />
                 </form>
             '''
         ),
         ArgCatcher(
-            responses.POST, 'http://robobrowser.com/post/',
+            responses.GET, 'http://robobrowser.com/post_form/',
+            body=b'''
+                <form id="bass" method="post" action="/submit/">'
+                    <input name="deacon" value="john" />
+                </form>
+                <form id="drums" method="post" action="/submit/">'
+                    <input name="deacon" value="john" />
+                </form>
+            '''
+        ),
+        ArgCatcher(
+            responses.GET, 'http://robobrowser.com/noname/',
+            body=b'''
+                <form name="input" action="action" method="get">
+                <input type="checkbox" name="vehicle" value="Bike">
+                    I have a bike<br>
+                <input type="checkbox" name="vehicle" value="Car">I have a car
+                <br><br>
+                <input type="submit" value="Submit">
+                </form>
+            '''
+        ),
+        ArgCatcher(
+            responses.POST, 'http://robobrowser.com/submit/',
         ),
     ]
 )
@@ -77,6 +93,7 @@ mock_urls = mock_responses(
         ArgCatcher(responses.GET, 'http://robobrowser.com/page4/'),
     ]
 )
+
 
 class TestHeaders(unittest.TestCase):
 
@@ -101,6 +118,7 @@ class TestHeaders(unittest.TestCase):
     def test_default_headers(self):
         browser = RoboBrowser()
         assert_equal(browser.session.headers, requests.Session().headers)
+
 
 class TestLinks(unittest.TestCase):
 
@@ -145,28 +163,62 @@ class TestLinks(unittest.TestCase):
         self.browser.follow_link(class_=re.compile(r'song'))
         assert_equal(self.browser.url, 'http://robobrowser.com/link2/')
 
+
 class TestForms(unittest.TestCase):
 
-    @mock_forms
     def setUp(self):
         self.browser = RoboBrowser()
-        self.browser.open('http://robobrowser.com/get/')
 
     @mock_forms
     def test_get_forms(self):
+        self.browser.open('http://robobrowser.com/get_form/')
         forms = self.browser.get_forms()
         assert_equal(len(forms), 2)
 
     @mock_forms
     def test_get_form_by_id(self):
+        self.browser.open('http://robobrowser.com/get_form/')
         form = self.browser.get_form('bass')
         assert_equal(form.parsed.get('id'), 'bass')
 
     @mock_forms
-    def test_submit_form(self):
+    def test_submit_form_get(self):
+        self.browser.open('http://robobrowser.com/get_form/')
         form = self.browser.get_form()
         self.browser.submit_form(form)
-        assert_equal(self.browser.url, 'http://robobrowser.com/post/')
+        assert_equal(
+            self.browser.url,
+            'http://robobrowser.com/get_form/?deacon=john'
+        )
+        assert_true(self.browser.state.response.request.body is None)
+
+    @mock_forms
+    def test_submit_form_post(self):
+        self.browser.open('http://robobrowser.com/post_form/')
+        form = self.browser.get_form()
+        self.browser.submit_form(form)
+        assert_equal(
+            self.browser.url,
+            'http://robobrowser.com/submit/'
+        )
+        assert_equal(
+            self.browser.state.response.request.body,
+            'deacon=john'
+        )
+
+
+class TestFormsInputNoName(unittest.TestCase):
+
+    @mock_forms
+    def setUp(self):
+        self.browser = RoboBrowser()
+        self.browser.open('http://robobrowser.com/noname/')
+
+    @mock_forms
+    def test_get_forms(self):
+        forms = self.browser.get_forms()
+        assert_equal(len(forms), 1)
+
 
 class TestHistoryInternals(unittest.TestCase):
 
@@ -183,7 +235,7 @@ class TestHistoryInternals(unittest.TestCase):
 
     @mock_forms
     def test_submit_appends_to_history(self):
-        self.browser.open('http://robobrowser.com/get/')
+        self.browser.open('http://robobrowser.com/get_form/')
         form = self.browser.get_form()
         self.browser.submit_form(form)
 
@@ -215,6 +267,7 @@ class TestHistoryInternals(unittest.TestCase):
             browser.open('http://robobrowser.com/page1/')
             assert_equal(len(browser._states), 1)
             assert_equal(browser._cursor, 0)
+
 
 class TestHistory(unittest.TestCase):
 
@@ -273,4 +326,58 @@ class TestHistory(unittest.TestCase):
             RoboError,
             self.browser.back,
             5
+        )
+
+
+class TestTimeout(unittest.TestCase):
+
+    @mock.patch('requests.Session.get')
+    def test_no_timeout(self, mock_get):
+        browser = RoboBrowser()
+        browser.open('http://robobrowser.com/')
+        mock_get.assert_called_once_with(
+            'http://robobrowser.com/', timeout=None, verify=True
+        )
+
+    @mock.patch('requests.Session.get')
+    def test_instance_timeout(self, mock_get):
+        browser = RoboBrowser(timeout=5)
+        browser.open('http://robobrowser.com/')
+        mock_get.assert_called_once_with(
+            'http://robobrowser.com/', timeout=5, verify=True
+        )
+
+    @mock.patch('requests.Session.get')
+    def test_call_timeout(self, mock_get):
+        browser = RoboBrowser(timeout=5)
+        browser.open('http://robobrowser.com/', timeout=10)
+        mock_get.assert_called_once_with(
+            'http://robobrowser.com/', timeout=10, verify=True
+        )
+
+
+class TestVerify(unittest.TestCase):
+
+    @mock.patch('requests.Session.get')
+    def test_no_verify(self, mock_get):
+        browser = RoboBrowser()
+        browser.open('http://robobrowser.com/')
+        mock_get.assert_called_once_with(
+            'http://robobrowser.com/', verify=True, timeout=None
+        )
+
+    @mock.patch('requests.Session.get')
+    def test_instance_verify(self, mock_get):
+        browser = RoboBrowser(verify=True)
+        browser.open('http://robobrowser.com/')
+        mock_get.assert_called_once_with(
+            'http://robobrowser.com/', verify=True, timeout=None
+        )
+
+    @mock.patch('requests.Session.get')
+    def test_call_verify(self, mock_get):
+        browser = RoboBrowser(verify=True)
+        browser.open('http://robobrowser.com/', verify=False)
+        mock_get.assert_called_once_with(
+            'http://robobrowser.com/', verify=False, timeout=None
         )

@@ -1,18 +1,24 @@
 """
-Convenience methods for working with BeautifulSoup objects.
+Miscellaneous helper functions
 """
 
 import re
+import time
+import logging
+import functools
+
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from robobrowser.compat import string_types, iteritems
+
 
 def match_text(text, tag):
     if isinstance(text, string_types):
         return text in tag.text
     if isinstance(text, re._pattern_type):
         return text.search(tag.text)
+
 
 def find_all(soup, name=None, attrs=None, recursive=True, text=None,
               limit=None, **kwargs):
@@ -39,6 +45,7 @@ def find_all(soup, name=None, attrs=None, recursive=True, text=None,
             break
     return rv
 
+
 def find(soup, name=None, attrs=None, recursive=True, text=None, **kwargs):
     """Modified find method; see `find_all`, above.
 
@@ -48,6 +55,7 @@ def find(soup, name=None, attrs=None, recursive=True, text=None, **kwargs):
     )
     if tags:
         return tags[0]
+
 
 def ensure_soup(value):
     """Coerce a value (or list of values) to BeautifulSoup (or list of
@@ -66,6 +74,7 @@ def ensure_soup(value):
         ]
     return BeautifulSoup(value)
 
+
 def lowercase_attr_names(tag):
     """Lower-case all attribute names of the provided BeautifulSoup tag.
     Note: this mutates the tag's attribute names and does not return a new
@@ -79,3 +88,26 @@ def lowercase_attr_names(tag):
         (key.lower(), value)
         for key, value in iteritems(tag.attrs)
     ])
+
+
+def retry(tries, errors=None, delay=3, multiplier=2, logger=None):
+
+    errors = errors or Exception
+    logger = logger or logging.getLogger(__name__)
+
+    def decorator(func):
+
+        @functools.wraps(func)
+        def decorated(*args, **kwargs):
+            mdelay = delay
+            for _ in range(tries - 1):
+                try:
+                    return func(*args, **kwargs)
+                except errors as error:
+                    logger.exception(error)
+                    time.sleep(mdelay)
+                    mdelay *= multiplier
+                return func(*args, **kwargs)
+        return decorated
+
+    return decorator

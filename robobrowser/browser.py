@@ -1,20 +1,25 @@
 """
-Robotic browser
+Robotic browser.
 """
 
 import re
 import requests
 from bs4 import BeautifulSoup
 from bs4.element import Tag
+from requests.exceptions import RequestException
 
 from robobrowser.compat import urlparse, string_types
-from . import helpers
-from .forms.form import Form
+from robobrowser import helpers
+from robobrowser.forms.form import Form
+from robobrowser.cache import RoboHTTPAdapter
+from robobrowser.helpers import retry
+
 
 class RoboError(Exception): pass
 
-_link_ptn = re.compile('^(a|button)$', re.I)
-_form_ptn = re.compile('^form$', re.I)
+_link_ptn = re.compile(r'^(a|button)$', re.I)
+_form_ptn = re.compile(r'^form$', re.I)
+
 
 class RoboState(object):
     """Representation of a browser state. Wraps the browser and response, and
@@ -41,24 +46,36 @@ class RoboState(object):
             )
         return self._parsed
 
+
 class RoboBrowser(object):
     """Robotic web browser. Represents HTTP requests and responses using the
     requests library and parsed HTML using BeautifulSoup.
 
+    :param tuple auth: Tuple of (username, password)
+    :param str parser: HTML parser; used by BeautifulSoup
+    :param dict headers: Default headers
+    :param str user_agent: Default user-agent
+    :param history: History length; infinite if True, 1 if falsy, else
+        takes integer value
+    :param int timeout: Default timeout in seconds
+    :param bool verify: Verify SSL
+
+    :param bool cache: Cache responses
+    :param list cache_patterns: List of URL patterns for cache
+    :param timedelta max_age: Max age for cache
+    :param int max_count: Max count for cache
+
+    :param int tries: Number of retries
+    :param Exception errors: Exception(s) to catch
+    :param int delay: Delay between retries
+    :param int multiplier: Delay multiplier between retries
+
     """
-
     def __init__(self, auth=None, parser=None, headers=None, user_agent=None,
-                 history=True):
-        """RoboBrowser constructor.
+                 history=True, timeout=None, verify=True, cache=False,
+                 cache_patterns=None, max_age=None, max_count=None, tries=None,
+                 errors=RequestException, delay=None, multiplier=None):
 
-        :param tuple auth: Tuple of (username, password)
-        :param str parser: HTML parser; used by BeautifulSoup
-        :param dict headers: Default headers
-        :param str user_agent: Default user-agent
-        :param history: History length; infinite if True, 1 if falsy, else
-            takes integer value
-
-        """
         self.session = requests.Session()
 
         # Add default basic auth
@@ -72,6 +89,21 @@ class RoboBrowser(object):
         self.session.headers.update(headers)
 
         self.parser = parser
+        self.timeout = timeout
+        self.verify = verify
+
+        # Set up caching
+        if cache:
+            adapter = RoboHTTPAdapter(max_age=max_age, max_count=max_count)
+            cache_patterns = cache_patterns or ['http://', 'https://']
+            for pattern in cache_patterns:
+                self.session.mount(pattern, adapter)
+        elif max_age:
+            raise ValueError('Parameter `max_age` is provided, '
+                             'but caching is turned off')
+        elif max_count:
+            raise ValueError('Parameter `max_count` is provided, '
+                             'but caching is turned off')
 
         # Configure history
         self.history = history
@@ -83,6 +115,13 @@ class RoboBrowser(object):
             self._maxlen = history
         self._states = []
         self._cursor = -1
+
+        # Set up retries
+        if tries:
+            decorator = retry(tries, errors, delay, multiplier)
+            self._open, self.open = self.open, decorator(self.open)
+            self._submit_form, self.submit_form = \
+                self.submit_form, decorator(self.submit_form)
 
     def __repr__(self):
         try:
@@ -147,20 +186,26 @@ class RoboBrowser(object):
             url
         )
 
-    def open(self, url):
+    def open(self, url, timeout=None, verify=None):
         """Open a URL.
 
         :param str url: URL
+        :param int timeout: Timeout in seconds
+        :param bool verify: Verify SSL
 
         """
-        response = self.session.get(url)
+        response = self.session.get(
+            url,
+            timeout=timeout or self.timeout,
+            verify=verify if verify is not None else self.verify,
+        )
         self._update_state(response)
 
     def _update_state(self, response):
         """Update the state of the browser. Create a new state object, and
         append to or overwrite the browser's state history.
 
-        :param requests.Response: New response object
+        :param requests.MockResponse: New response object
 
         """
         # Clear trailing states
@@ -287,12 +332,12 @@ class RoboBrowser(object):
 
         """
         # Get HTTP verb
-        func = getattr(self.session, form.method.lower())
+        method = form.method.upper()
 
         # Send request
         url = self._build_url(form.action) or self.url
-        data = form.serialize()
-        response = func(url, **data)
+        form_data = form.serialize()
+        response = self.session.request(method, url, **form_data.to_requests(method))
 
         # Update history
         self._update_state(response)
